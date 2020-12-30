@@ -1,5 +1,14 @@
 #version 450
 
+/*
+
+  TODO: References for making a faster version:
+
+    - https://rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/
+    - https://fgiesen.wordpress.com/2012/07/30/fast-blurs-1/
+  
+ */
+
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
