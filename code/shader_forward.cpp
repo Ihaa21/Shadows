@@ -1,5 +1,20 @@
 #version 450
 
+/*
+
+   TODO: References for more techniques to implement + better versions of below:
+
+    - https://www.trentreed.net/blog/exponential-shadow-maps/
+    - https://discovery.ucl.ac.uk/id/eprint/10001/1/10001.pdf
+    - https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-8-summed-area-variance-shadow-maps
+    - google poisson disk sampling for PCF kernels
+    - https://gamedev.stackexchange.com/questions/66030/exponential-variance-shadow-mapping-implementation
+        - http://developer.download.nvidia.com/presentations/2008/GDC/GDC08_SoftShadowMapping.pdf
+    - https://mynameismjp.wordpress.com/2013/09/10/shadow-maps/
+    - https://cg.cs.uni-bonn.de/aigaion2root/attachments/MomentShadowMapping.pdf
+  
+ */
+
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
 
