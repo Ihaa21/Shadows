@@ -136,9 +136,8 @@ struct demo_state
     VkFormat SwapChainFormat;
     render_target_entry SwapChainEntry;
     render_target CopyToSwapTarget;
-    VkDescriptorSetLayout CopyToSwapDescLayout;
     VkDescriptorSet CopyToSwapDesc;
-    render_fullscreen_pass CopyToSwapPass;
+    vk_pipeline* CopyToSwapPipeline;
 
     render_scene Scene;
 

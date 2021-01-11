@@ -125,8 +125,8 @@ inline void StandardShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
         VkCheckResult(vkCreateSampler(RenderState->Device, &SamplerCreateInfo, 0, &Result->Sampler));
     }
     
-    Result->ShadowEntry = RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_D32_SFLOAT,
-                                                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            VK_IMAGE_ASPECT_DEPTH_BIT, &Result->ShadowImage, &Result->ShadowEntry);
 
     // NOTE: Shadow RT
     {
@@ -201,13 +201,17 @@ inline void VarianceShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
     u64 HeapSize = MegaBytes(64);
     Result->Arena = VkLinearArenaCreate(VkMemoryAllocate(RenderState->Device, RenderState->LocalMemoryId, HeapSize), HeapSize);
 
-    Result->Sampler = VkSamplerCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 16.0f);    
-    Result->VarianceEntry = RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
-                                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-    Result->VarianceEntry2 = RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
-                                                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-    Result->DepthEntry = RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_D32_SFLOAT,
-                                                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    Result->Sampler = VkSamplerCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 16.0f);
+
+    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
+                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            VK_IMAGE_ASPECT_COLOR_BIT, &Result->VarianceImage, &Result->VarianceEntry);
+    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
+                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            VK_IMAGE_ASPECT_COLOR_BIT, &Result->VarianceImage2, &Result->VarianceEntry2);
+    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_D32_SFLOAT,
+                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            VK_IMAGE_ASPECT_DEPTH_BIT, &Result->DepthImage, &Result->DepthEntry);
 
     // NOTE: Shadow RT
     {
@@ -322,10 +326,10 @@ inline void VarianceShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
         {
             Result->BlurDescLayout,
         };
-        Result->BlurXPass = FullScreenPassCreate("shader_gaussian_x_frag.spv", "main", &Result->BlurXTarget, ArrayCount(Layouts),
-                                                 Layouts, 1, &Result->BlurXDescriptor);
-        Result->BlurYPass = FullScreenPassCreate("shader_gaussian_y_frag.spv", "main", &Result->BlurYTarget, ArrayCount(Layouts),
-                                                 Layouts, 1, &Result->BlurYDescriptor);
+        Result->BlurXPipeline = FullScreenPipelineCreate("shader_gaussian_x_frag.spv", "main", Result->BlurXTarget.RenderPass, 0,
+                                                         ArrayCount(Layouts), Layouts);
+        Result->BlurYPipeline = FullScreenPipelineCreate("shader_gaussian_y_frag.spv", "main", Result->BlurYTarget.RenderPass, 0,
+                                                         ArrayCount(Layouts), Layouts);
     }
 }
 
@@ -343,9 +347,10 @@ inline void ForwardSwapChainChange(forward_state* State, u32 Width, u32 Height, 
     {
         RenderTargetEntryReCreate(&State->RenderTargetArena, Width, Height, ColorFormat,
                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
-                                  &State->ColorEntry);
+                                  &State->ColorImage, &State->ColorEntry);
         RenderTargetEntryReCreate(&State->RenderTargetArena, Width, Height, VK_FORMAT_D32_SFLOAT,
-                                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, &State->DepthEntry);
+                                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+                                  &State->DepthImage, &State->DepthEntry);
 
         if (ReCreate)
         {
@@ -445,7 +450,7 @@ inline void ForwardRender(vk_commands Commands, forward_state* State, render_sce
 #endif
     
     // NOTE: Generate Directional Shadow Map
-    RenderTargetRenderPassBegin(&ShadowRenderTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
+    RenderTargetPassBegin(&ShadowRenderTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
     {
         vkCmdBindPipeline(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ShadowPipeline->Handle);
         {
@@ -468,15 +473,20 @@ inline void ForwardRender(vk_commands Commands, forward_state* State, render_sce
             vkCmdDrawIndexed(Commands.Buffer, CurrMesh->NumIndices, 1, 0, 0, InstanceId);
         }
     }
-    RenderTargetRenderPassEnd(Commands);        
+    RenderTargetPassEnd(Commands);        
 
 #ifdef VARIANCE_SHADOW
-    FullScreenPassRender(Commands, &State->VarianceShadow.BlurXPass);
-    FullScreenPassRender(Commands, &State->VarianceShadow.BlurYPass);
+    RenderTargetPassBegin(&State->VarianceShadow.BlurXTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
+    FullScreenPassRender(Commands, State->VarianceShadow.BlurXPipeline, 1, &State->VarianceShadow.BlurXDescriptor);
+    RenderTargetPassEnd(Commands);
+    
+    RenderTargetPassBegin(&State->VarianceShadow.BlurYTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
+    FullScreenPassRender(Commands, State->VarianceShadow.BlurYPipeline, 1, &State->VarianceShadow.BlurYDescriptor);
+    RenderTargetPassEnd(Commands);        
 #endif
     
     // NOTE: Draw Meshes
-    RenderTargetRenderPassBegin(&State->ForwardRenderTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
+    RenderTargetPassBegin(&State->ForwardRenderTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
     {
         vkCmdBindPipeline(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ForwardPipeline->Handle);
         {
@@ -509,5 +519,5 @@ inline void ForwardRender(vk_commands Commands, forward_state* State, render_sce
             vkCmdDrawIndexed(Commands.Buffer, CurrMesh->NumIndices, 1, 0, 0, InstanceId);
         }
     }
-    RenderTargetRenderPassEnd(Commands);        
+    RenderTargetPassEnd(Commands);        
 }

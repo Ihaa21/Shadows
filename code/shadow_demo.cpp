@@ -148,18 +148,11 @@ DEMO_INIT(Init)
 
     // NOTE: Copy To Swap RT
     {
-        {
-            vk_descriptor_layout_builder Builder = VkDescriptorLayoutBegin(&DemoState->CopyToSwapDescLayout);
-            VkDescriptorLayoutAdd(&Builder, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-            VkDescriptorLayoutEnd(RenderState->Device, &Builder);
-        }
-
         render_target_builder Builder = RenderTargetBuilderBegin(&DemoState->Arena, &DemoState->TempArena, RenderState->WindowWidth,
                                                                  RenderState->WindowHeight);
         RenderTargetAddTarget(&Builder, &DemoState->SwapChainEntry, VkClearColorCreate(0, 0, 0, 1));
                             
         vk_render_pass_builder RpBuilder = VkRenderPassBuilderBegin(&DemoState->TempArena);
-
         u32 ColorId = VkRenderPassAttachmentAdd(&RpBuilder, RenderState->SwapChainFormat, VK_ATTACHMENT_LOAD_OP_CLEAR,
                                                 VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_UNDEFINED,
                                                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -169,6 +162,8 @@ DEMO_INIT(Init)
         VkRenderPassSubPassEnd(&RpBuilder);
 
         DemoState->CopyToSwapTarget = RenderTargetBuilderEnd(&Builder, VkRenderPassBuilderEnd(&RpBuilder, RenderState->Device));
+        DemoState->CopyToSwapPipeline = FullScreenCopyImageCreate(DemoState->CopyToSwapTarget.RenderPass, 0);
+        DemoState->CopyToSwapDesc = VkDescriptorSetAllocate(RenderState->Device, RenderState->DescriptorPool, RenderState->CopyImageDescLayout);
     }
 
     // NOTE: Init scene system
@@ -240,7 +235,6 @@ DEMO_INIT(Init)
 
     // NOTE: Create render data
     DemoState->SwapChainFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    DemoState->CopyToSwapDesc = VkDescriptorSetAllocate(RenderState->Device, RenderState->DescriptorPool, DemoState->CopyToSwapDescLayout);
     {
         renderer_create_info CreateInfo = {};
         CreateInfo.Width = RenderState->WindowWidth; //710;
@@ -251,10 +245,6 @@ DEMO_INIT(Init)
         CreateInfo.Scene = &DemoState->Scene;
         ForwardCreate(CreateInfo, &DemoState->CopyToSwapDesc, &DemoState->ForwardState);
     }
-
-    // NOTE: Copy To Swap FullScreen Pass
-    DemoState->CopyToSwapPass = FullScreenPassCreate("shader_copy_to_swap_frag.spv", "main", &DemoState->CopyToSwapTarget, 1,
-                                                     &DemoState->CopyToSwapDescLayout, 1, &DemoState->CopyToSwapDesc);
     
     // NOTE: Upload assets
     vk_commands Commands = RenderState->Commands;
@@ -279,8 +269,8 @@ DEMO_INIT(Init)
 
             u32 Dim = 8;
             u32 ImageSize = Dim*Dim*sizeof(u32);
-            WhiteTexture = VkImage2dCreate(RenderState->Device, &RenderState->GpuArena, Dim, Dim, VK_FORMAT_R8G8B8A8_UNORM,
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+            WhiteTexture = VkImageCreate(RenderState->Device, &RenderState->GpuArena, Dim, Dim, VK_FORMAT_R8G8B8A8_UNORM,
+                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
 
             // TODO: Better barrier here pls
             u8* GpuMemory = VkTransferPushWriteImage(&RenderState->TransferManager, WhiteTexture.Image, Dim, Dim, ImageSize,
@@ -469,8 +459,11 @@ DEMO_MAIN_LOOP(MainLoop)
 
     // NOTE: Render Scene
     ForwardRender(Commands, &DemoState->ForwardState, &DemoState->Scene);
-    FullScreenPassRender(Commands, &DemoState->CopyToSwapPass);
-    
+
+    RenderTargetPassBegin(&DemoState->CopyToSwapTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
+    FullScreenPassRender(Commands, DemoState->CopyToSwapPipeline, 1, &DemoState->CopyToSwapDesc);
+    RenderTargetPassEnd(Commands);
+        
     VkCheckResult(vkEndCommandBuffer(Commands.Buffer));
                     
     // NOTE: Render to our window surface
