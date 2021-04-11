@@ -126,12 +126,12 @@ struct demo_state
 {
     linear_arena Arena;
     linear_arena TempArena;
-
+    
     // NOTE: Samplers
     VkSampler PointSampler;
     VkSampler LinearSampler;
     VkSampler AnisoSampler;
-
+    
     // NOTE: Render Target Entries
     VkFormat SwapChainFormat;
     render_target_entry SwapChainEntry;
@@ -147,6 +147,14 @@ struct demo_state
     u32 Sphere;
 
     forward_state ForwardState;
+    ui_state UiState;
+
+    // NOTE: Shadow values
+    shadow_mode ShadowMode;
+    u32 ShadowResX;
+    u32 ShadowResY;
+    f32 ShadowWorldDim;
+    v3 ShadowView;
 };
 
 global demo_state* DemoState;

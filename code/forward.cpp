@@ -75,7 +75,7 @@ inline vk_pipeline* ForwardPipelineCreate(char* VertFileName, char* FragFileName
     VkPipelineDepthStateAdd(&Builder, VK_TRUE, VK_TRUE, VK_COMPARE_OP_GREATER);
                 
     // NOTE: Set the blending state
-    VkPipelineColorAttachmentAdd(&Builder, VK_FALSE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
+    VkPipelineColorAttachmentAdd(&Builder, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
                                  VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
 
     VkDescriptorSetLayout DescriptorLayouts[] =
@@ -95,6 +95,27 @@ inline vk_pipeline* ForwardPipelineCreate(char* VertFileName, char* FragFileName
 // NOTE: Standard Shadow Data
 //
 
+inline void StandardShadowResize(standard_shadow_data* ShadowData, u32 Width, u32 Height)
+{
+    b32 ReCreate = ShadowData->Arena.Used != 0;
+    VkArenaClear(&ShadowData->Arena);
+
+    ShadowData->Width = Width;
+    ShadowData->Height = Height;
+    
+    RenderTargetEntryReCreate(&ShadowData->Arena, Width, Height, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_DEPTH_BIT, &ShadowData->ShadowImage, &ShadowData->ShadowEntry);
+
+    if (ReCreate)
+    {
+        RenderTargetUpdateEntries(&DemoState->TempArena, &ShadowData->RenderTarget);
+    }
+
+    VkDescriptorImageWrite(&RenderState->DescriptorManager, ShadowData->ShadowDescriptor, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                           ShadowData->ShadowEntry.View, ShadowData->Sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    VkDescriptorManagerFlush(RenderState->Device, &RenderState->DescriptorManager);
+}
+
 inline void StandardShadowCreate(u32 Width, u32 Height, renderer_create_info CreateInfo, render_target ForwardRenderTarget,
                                  VkDescriptorSetLayout ShadowDescLayout, b32 Pcf, standard_shadow_data* Result)
 {
@@ -102,7 +123,7 @@ inline void StandardShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
     *Result = {};
 
     u64 HeapSize = MegaBytes(64);
-    Result->Arena = VkLinearArenaCreate(VkMemoryAllocate(RenderState->Device, RenderState->LocalMemoryId, HeapSize), HeapSize);
+    Result->Arena = VkLinearArenaCreate(RenderState->Device, RenderState->LocalMemoryId, HeapSize);
 
     {
         VkSamplerCreateInfo SamplerCreateInfo = {};
@@ -124,14 +145,14 @@ inline void StandardShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
 
         VkCheckResult(vkCreateSampler(RenderState->Device, &SamplerCreateInfo, 0, &Result->Sampler));
     }
-    
-    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_DEPTH_BIT, &Result->ShadowImage, &Result->ShadowEntry);
+
+    Result->ShadowDescriptor = VkDescriptorSetAllocate(RenderState->Device, RenderState->DescriptorPool, ShadowDescLayout);
+    StandardShadowResize(Result, Width, Height);
 
     // NOTE: Shadow RT
     {
         render_target_builder Builder = RenderTargetBuilderBegin(&DemoState->Arena, &DemoState->TempArena, Width, Height);
-        RenderTargetAddTarget(&Builder, &Result->ShadowEntry, VkClearDepthStencilCreate(1, 0));
+        RenderTargetAddTarget(&Builder, &Result->ShadowEntry, VkClearDepthStencilCreate(0, 0));
                             
         vk_render_pass_builder RpBuilder = VkRenderPassBuilderBegin(&DemoState->TempArena);
 
@@ -164,7 +185,7 @@ inline void StandardShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
         VkPipelineVertexBindingEnd(&Builder);
 
         VkPipelineInputAssemblyAdd(&Builder, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE);
-        VkPipelineDepthStateAdd(&Builder, VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
+        VkPipelineDepthStateAdd(&Builder, VK_TRUE, VK_TRUE, VK_COMPARE_OP_GREATER);
         //VkPipelineDepthOffsetAdd(&Builder, 4.0f, 100.0f, 1.5f);
 
         VkDescriptorSetLayout DescriptorLayouts[] =
@@ -193,31 +214,54 @@ inline void StandardShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
 // NOTE: Variance Shadow Data
 //
 
+inline void VarianceShadowResize(variance_shadow_data* ShadowData, u32 Width, u32 Height)
+{
+    b32 ReCreate = ShadowData->Arena.Used != 0;
+    VkArenaClear(&ShadowData->Arena);
+
+    ShadowData->Width = Width;
+    ShadowData->Height = Height;
+
+    RenderTargetEntryReCreate(&ShadowData->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
+                              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_COLOR_BIT, &ShadowData->VarianceImage, &ShadowData->VarianceEntry);
+    RenderTargetEntryReCreate(&ShadowData->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
+                              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_COLOR_BIT, &ShadowData->VarianceImage2, &ShadowData->VarianceEntry2);
+    RenderTargetEntryReCreate(&ShadowData->Arena, Width, Height, VK_FORMAT_D32_SFLOAT,
+                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_DEPTH_BIT, &ShadowData->DepthImage, &ShadowData->DepthEntry);
+
+    if (ReCreate)
+    {
+        RenderTargetUpdateEntries(&DemoState->TempArena, &ShadowData->RenderTarget);
+        RenderTargetUpdateEntries(&DemoState->TempArena, &ShadowData->BlurXTarget);
+        RenderTargetUpdateEntries(&DemoState->TempArena, &ShadowData->BlurYTarget);
+    }
+
+    VkDescriptorImageWrite(&RenderState->DescriptorManager, ShadowData->ShadowDescriptor, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                           ShadowData->VarianceEntry.View, ShadowData->Sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    VkDescriptorManagerFlush(RenderState->Device, &RenderState->DescriptorManager);
+}
+
 inline void VarianceShadowCreate(u32 Width, u32 Height, renderer_create_info CreateInfo, render_target ForwardRenderTarget,
                                  VkDescriptorSetLayout ShadowDescLayout, variance_shadow_data* Result)
 {
     *Result = {};
 
     u64 HeapSize = MegaBytes(64);
-    Result->Arena = VkLinearArenaCreate(VkMemoryAllocate(RenderState->Device, RenderState->LocalMemoryId, HeapSize), HeapSize);
+    Result->Arena = VkLinearArenaCreate(RenderState->Device, RenderState->LocalMemoryId, HeapSize);
 
-    Result->Sampler = VkSamplerCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 16.0f);
+    Result->Sampler = VkSamplerCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, 16.0f);
+    Result->ShadowDescriptor = VkDescriptorSetAllocate(RenderState->Device, RenderState->DescriptorPool, ShadowDescLayout);
 
-    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
-                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_COLOR_BIT, &Result->VarianceImage, &Result->VarianceEntry);
-    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_R32G32_SFLOAT,
-                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_COLOR_BIT, &Result->VarianceImage2, &Result->VarianceEntry2);
-    RenderTargetEntryCreate(&Result->Arena, Width, Height, VK_FORMAT_D32_SFLOAT,
-                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_DEPTH_BIT, &Result->DepthImage, &Result->DepthEntry);
-
+    VarianceShadowResize(Result, Width, Height);
+    
     // NOTE: Shadow RT
     {
         render_target_builder Builder = RenderTargetBuilderBegin(&DemoState->Arena, &DemoState->TempArena, Width, Height);
         RenderTargetAddTarget(&Builder, &Result->VarianceEntry, VkClearColorCreate(1, 1, 0, 0));
-        RenderTargetAddTarget(&Builder, &Result->DepthEntry, VkClearDepthStencilCreate(1, 0));
+        RenderTargetAddTarget(&Builder, &Result->DepthEntry, VkClearDepthStencilCreate(0, 0));
                             
         vk_render_pass_builder RpBuilder = VkRenderPassBuilderBegin(&DemoState->TempArena);
 
@@ -255,10 +299,10 @@ inline void VarianceShadowCreate(u32 Width, u32 Height, renderer_create_info Cre
         VkPipelineVertexBindingEnd(&Builder);
 
         VkPipelineInputAssemblyAdd(&Builder, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE);
-        VkPipelineDepthStateAdd(&Builder, VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
+        VkPipelineDepthStateAdd(&Builder, VK_TRUE, VK_TRUE, VK_COMPARE_OP_GREATER);
                 
         // NOTE: Set the blending state
-        VkPipelineColorAttachmentAdd(&Builder, VK_FALSE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
+        VkPipelineColorAttachmentAdd(&Builder, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
                                      VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
 
         VkDescriptorSetLayout DescriptorLayouts[] =
@@ -364,12 +408,13 @@ inline void ForwardSwapChainChange(forward_state* State, u32 Width, u32 Height, 
     VkDescriptorManagerFlush(RenderState->Device, &RenderState->DescriptorManager);
 }
 
-inline void ForwardCreate(renderer_create_info CreateInfo, VkDescriptorSet* OutputRtSet, forward_state* Result)
+inline void ForwardCreate(renderer_create_info CreateInfo, VkDescriptorSet* OutputRtSet, u32 ShadowWidth, u32 ShadowHeight,
+                          forward_state* Result)
 {
     *Result = {};
 
     u64 HeapSize = MegaBytes(256);
-    Result->RenderTargetArena = VkLinearArenaCreate(VkMemoryAllocate(RenderState->Device, RenderState->LocalMemoryId, HeapSize), HeapSize);
+    Result->RenderTargetArena = VkLinearArenaCreate(RenderState->Device, RenderState->LocalMemoryId, HeapSize);
     
     ForwardSwapChainChange(Result, CreateInfo.Width, CreateInfo.Height, CreateInfo.ColorFormat, CreateInfo.Scene, OutputRtSet);
 
@@ -402,52 +447,47 @@ inline void ForwardCreate(renderer_create_info CreateInfo, VkDescriptorSet* Outp
 
         Result->ForwardRenderTarget = RenderTargetBuilderEnd(&Builder, VkRenderPassBuilderEnd(&RpBuilder, RenderState->Device));
     }
-
-    u32 ShadowWidth = 1024;
-    u32 ShadowHeight = 1024;
+    
     StandardShadowCreate(ShadowWidth, ShadowHeight, CreateInfo, Result->ForwardRenderTarget, Result->ShadowDescLayout, false, &Result->StandardShadow);
     StandardShadowCreate(ShadowWidth, ShadowHeight, CreateInfo, Result->ForwardRenderTarget, Result->ShadowDescLayout, true, &Result->PcfShadow);
     VarianceShadowCreate(ShadowWidth, ShadowHeight, CreateInfo, Result->ForwardRenderTarget, Result->ShadowDescLayout, &Result->VarianceShadow);
-
-    // TODO: Choose our shadow algo cleaner
-    Result->ShadowDescriptor = VkDescriptorSetAllocate(RenderState->Device, RenderState->DescriptorPool, Result->ShadowDescLayout);
-#ifdef STANDARD_SHADOW
-    VkDescriptorImageWrite(&RenderState->DescriptorManager, Result->ShadowDescriptor, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                           Result->StandardShadow.ShadowEntry.View, Result->StandardShadow.Sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-#endif
-#ifdef PCF_SHADOW
-    VkDescriptorImageWrite(&RenderState->DescriptorManager, Result->ShadowDescriptor, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                           Result->PcfShadow.ShadowEntry.View, Result->PcfShadow.Sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-#endif
-#ifdef VARIANCE_SHADOW
-    VkDescriptorImageWrite(&RenderState->DescriptorManager, Result->ShadowDescriptor, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                           Result->VarianceShadow.VarianceEntry.View, Result->VarianceShadow.Sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-#endif
     
     VkDescriptorManagerFlush(RenderState->Device, &RenderState->DescriptorManager);
 }
 
-inline void ForwardRender(vk_commands Commands, forward_state* State, render_scene* Scene)
+inline void ForwardRender(vk_commands Commands, forward_state* State, render_scene* Scene, shadow_mode ShadowMode)
 {
     render_target ShadowRenderTarget = {};
     vk_pipeline* ShadowPipeline = {};
     vk_pipeline* ForwardPipeline = {};
+    VkDescriptorSet ShadowDescriptor = {};
 
-#ifdef STANDARD_SHADOW
-    ShadowRenderTarget = State->StandardShadow.RenderTarget;
-    ShadowPipeline = State->StandardShadow.ShadowPipeline;
-    ForwardPipeline = State->StandardShadow.ForwardPipeline;
-#endif
-#ifdef PCF_SHADOW
-    ShadowRenderTarget = State->PcfShadow.RenderTarget;
-    ShadowPipeline = State->PcfShadow.ShadowPipeline;
-    ForwardPipeline = State->PcfShadow.ForwardPipeline;
-#endif
-#ifdef VARIANCE_SHADOW
-    ShadowRenderTarget = State->VarianceShadow.RenderTarget;
-    ShadowPipeline = State->VarianceShadow.ShadowPipeline;
-    ForwardPipeline = State->VarianceShadow.ForwardPipeline;
-#endif
+    switch (ShadowMode)
+    {
+        case ShadowMode_Standard:
+        {
+            ShadowRenderTarget = State->StandardShadow.RenderTarget;
+            ShadowPipeline = State->StandardShadow.ShadowPipeline;
+            ForwardPipeline = State->StandardShadow.ForwardPipeline;
+            ShadowDescriptor = State->StandardShadow.ShadowDescriptor;
+        } break;
+
+        case ShadowMode_Pcf:
+        {
+            ShadowRenderTarget = State->PcfShadow.RenderTarget;
+            ShadowPipeline = State->PcfShadow.ShadowPipeline;
+            ForwardPipeline = State->PcfShadow.ForwardPipeline;
+            ShadowDescriptor = State->PcfShadow.ShadowDescriptor;
+        } break;
+
+        case ShadowMode_Variance:
+        {
+            ShadowRenderTarget = State->VarianceShadow.RenderTarget;
+            ShadowPipeline = State->VarianceShadow.ShadowPipeline;
+            ForwardPipeline = State->VarianceShadow.ForwardPipeline;
+            ShadowDescriptor = State->VarianceShadow.ShadowDescriptor;
+        } break;
+    }
     
     // NOTE: Generate Directional Shadow Map
     RenderTargetPassBegin(&ShadowRenderTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
@@ -475,15 +515,16 @@ inline void ForwardRender(vk_commands Commands, forward_state* State, render_sce
     }
     RenderTargetPassEnd(Commands);        
 
-#ifdef VARIANCE_SHADOW
-    RenderTargetPassBegin(&State->VarianceShadow.BlurXTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
-    FullScreenPassRender(Commands, State->VarianceShadow.BlurXPipeline, 1, &State->VarianceShadow.BlurXDescriptor);
-    RenderTargetPassEnd(Commands);
+    if (ShadowMode == ShadowMode_Variance)
+    {
+        RenderTargetPassBegin(&State->VarianceShadow.BlurXTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
+        FullScreenPassRender(Commands, State->VarianceShadow.BlurXPipeline, 1, &State->VarianceShadow.BlurXDescriptor);
+        RenderTargetPassEnd(Commands);
     
-    RenderTargetPassBegin(&State->VarianceShadow.BlurYTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
-    FullScreenPassRender(Commands, State->VarianceShadow.BlurYPipeline, 1, &State->VarianceShadow.BlurYDescriptor);
-    RenderTargetPassEnd(Commands);        
-#endif
+        RenderTargetPassBegin(&State->VarianceShadow.BlurYTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
+        FullScreenPassRender(Commands, State->VarianceShadow.BlurYPipeline, 1, &State->VarianceShadow.BlurYDescriptor);
+        RenderTargetPassEnd(Commands);        
+    }
     
     // NOTE: Draw Meshes
     RenderTargetPassBegin(&State->ForwardRenderTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
@@ -493,7 +534,7 @@ inline void ForwardRender(vk_commands Commands, forward_state* State, render_sce
             VkDescriptorSet DescriptorSets[] =
                 {
                     Scene->SceneDescriptor,
-                    State->ShadowDescriptor,
+                    ShadowDescriptor,
                 };
             vkCmdBindDescriptorSets(Commands.Buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ForwardPipeline->Layout, 1,
                                     ArrayCount(DescriptorSets), DescriptorSets, 0, 0);

@@ -1,9 +1,5 @@
 #pragma once
 
-//#define STANDARD_SHADOW
-//#define PCF_SHADOW
-#define VARIANCE_SHADOW
-
 struct standard_shadow_data
 {
     vk_linear_arena Arena;
@@ -16,6 +12,8 @@ struct standard_shadow_data
     render_target RenderTarget;
     vk_pipeline* ShadowPipeline;
     vk_pipeline* ForwardPipeline;
+
+    VkDescriptorSet ShadowDescriptor;
 };
 
 struct variance_shadow_data
@@ -37,6 +35,9 @@ struct variance_shadow_data
     vk_pipeline* ShadowPipeline;
     vk_pipeline* ForwardPipeline;
 
+    VkDescriptorSet ShadowDescriptor;
+
+    
     VkDescriptorSetLayout BlurDescLayout;
     VkDescriptorSet BlurXDescriptor;
     VkDescriptorSet BlurYDescriptor;
@@ -44,6 +45,15 @@ struct variance_shadow_data
     render_target BlurYTarget;
     vk_pipeline* BlurXPipeline;
     vk_pipeline* BlurYPipeline;
+};
+
+enum shadow_mode
+{
+    ShadowMode_None,
+
+    ShadowMode_Standard,
+    ShadowMode_Pcf,
+    ShadowMode_Variance,
 };
 
 struct forward_state
@@ -61,5 +71,4 @@ struct forward_state
     render_target ForwardRenderTarget;
 
     VkDescriptorSetLayout ShadowDescLayout;
-    VkDescriptorSet ShadowDescriptor;
 };

@@ -112,33 +112,11 @@ DEMO_INIT(Init)
             InitParams.DeviceExtensions = DeviceExtensions;
             VkInit(VulkanLib, hInstance, WindowHandle, &DemoState->Arena, &DemoState->TempArena, InitParams);
         }
-        
-        // NOTE: Init descriptor pool
-        {
-            VkDescriptorPoolSize Pools[5] = {};
-            Pools[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            Pools[0].descriptorCount = 1000;
-            Pools[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            Pools[1].descriptorCount = 1000;
-            Pools[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            Pools[2].descriptorCount = 1000;
-            Pools[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
-            Pools[3].descriptorCount = 1000;
-            Pools[4].type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-            Pools[4].descriptorCount = 1000;
-            
-            VkDescriptorPoolCreateInfo CreateInfo = {};
-            CreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            CreateInfo.maxSets = 1000;
-            CreateInfo.poolSizeCount = ArrayCount(Pools);
-            CreateInfo.pPoolSizes = Pools;
-            VkCheckResult(vkCreateDescriptorPool(RenderState->Device, &CreateInfo, 0, &RenderState->DescriptorPool));
-        }
     }
     
     // NOTE: Create samplers
-    DemoState->PointSampler = VkSamplerCreate(RenderState->Device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f);
-    DemoState->LinearSampler = VkSamplerCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f);
+    DemoState->PointSampler = VkSamplerCreate(RenderState->Device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, 0.0f);
+    DemoState->LinearSampler = VkSamplerCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, 0.0f);
     DemoState->AnisoSampler = VkSamplerMipMapCreate(RenderState->Device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 16.0f,
                                                     VK_SAMPLER_MIPMAP_MODE_LINEAR, 0, 0, 5);    
         
@@ -155,7 +133,7 @@ DEMO_INIT(Init)
         vk_render_pass_builder RpBuilder = VkRenderPassBuilderBegin(&DemoState->TempArena);
         u32 ColorId = VkRenderPassAttachmentAdd(&RpBuilder, RenderState->SwapChainFormat, VK_ATTACHMENT_LOAD_OP_CLEAR,
                                                 VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_UNDEFINED,
-                                                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+                                                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
         VkRenderPassSubPassBegin(&RpBuilder, VK_PIPELINE_BIND_POINT_GRAPHICS);
         VkRenderPassColorRefAdd(&RpBuilder, ColorId, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -170,8 +148,8 @@ DEMO_INIT(Init)
     {
         render_scene* Scene = &DemoState->Scene;
 
-        Scene->Camera = CameraFpsCreate(V3(0, 0, -5), V3(0, 0, 1), f32(RenderState->WindowWidth / RenderState->WindowHeight),
-                                        0.01f, 1000.0f, 90.0f, 1.0f, 0.005f);
+        Scene->Camera = CameraFpsCreate(V3(0, 0, -5), V3(0, 0, 1), true, 1.0f, 0.005f);
+        CameraSetPersp(&Scene->Camera, f32(RenderState->WindowWidth / RenderState->WindowHeight), 90.0f, 0.01f, 1000.0f);
 
         Scene->SceneBuffer = VkBufferCreate(RenderState->Device, &RenderState->GpuArena,
                                             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -234,6 +212,11 @@ DEMO_INIT(Init)
     }
 
     // NOTE: Create render data
+    DemoState->ShadowMode = ShadowMode_Variance;
+    DemoState->ShadowResX = 512;
+    DemoState->ShadowResY = 512;
+    DemoState->ShadowWorldDim = 1.0f;
+    DemoState->ShadowView = V3(0.4f, -1.0f, 0.0f);
     DemoState->SwapChainFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     {
         renderer_create_info CreateInfo = {};
@@ -243,7 +226,7 @@ DEMO_INIT(Init)
         CreateInfo.MaterialDescLayout = DemoState->Scene.MaterialDescLayout;
         CreateInfo.SceneDescLayout = DemoState->Scene.SceneDescLayout;
         CreateInfo.Scene = &DemoState->Scene;
-        ForwardCreate(CreateInfo, &DemoState->CopyToSwapDesc, &DemoState->ForwardState);
+        ForwardCreate(CreateInfo, &DemoState->CopyToSwapDesc, DemoState->ShadowResX, DemoState->ShadowResY, &DemoState->ForwardState);
     }
     
     // NOTE: Upload assets
@@ -286,6 +269,10 @@ DEMO_INIT(Init)
         DemoState->Cube = SceneMeshAdd(Scene, WhiteTexture, WhiteTexture, AssetsPushCube());
         DemoState->Sphere = SceneMeshAdd(Scene, WhiteTexture, WhiteTexture, AssetsPushSphere(64, 64));
 
+        UiStateCreate(RenderState->Device, &DemoState->Arena, &DemoState->TempArena, RenderState->LocalMemoryId,
+                      &RenderState->DescriptorManager, &RenderState->PipelineManager, &RenderState->TransferManager,
+                      RenderState->SwapChainFormat, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, &DemoState->UiState);
+            
         VkDescriptorManagerFlush(RenderState->Device, &RenderState->DescriptorManager);
         VkTransferManagerFlush(&RenderState->TransferManager, RenderState->Device, RenderState->Commands.Buffer, &RenderState->BarrierManager);
     }
@@ -305,7 +292,7 @@ DEMO_SWAPCHAIN_CHANGE(SwapChainChange)
     DemoState->SwapChainEntry.Width = RenderState->WindowWidth;
     DemoState->SwapChainEntry.Height = RenderState->WindowHeight;
 
-    DemoState->Scene.Camera.AspectRatio = f32(RenderState->WindowWidth / RenderState->WindowHeight);
+    DemoState->Scene.Camera.PerspAspectRatio = f32(RenderState->WindowWidth / RenderState->WindowHeight);
     
     ForwardSwapChainChange(&DemoState->ForwardState, RenderState->WindowWidth, RenderState->WindowHeight,
                            DemoState->SwapChainFormat, &DemoState->Scene, &DemoState->CopyToSwapDesc);
@@ -337,13 +324,112 @@ DEMO_MAIN_LOOP(MainLoop)
     VkPipelineUpdateShaders(RenderState->Device, &RenderState->CpuArena, &RenderState->PipelineManager);
 
     RenderTargetUpdateEntries(&DemoState->TempArena, &DemoState->CopyToSwapTarget);
+
+    // NOTE: Update Ui State
+    {
+        ui_state* UiState = &DemoState->UiState;
+        
+        ui_frame_input UiCurrInput = {};
+        UiCurrInput.MouseDown = CurrInput->MouseDown;
+        UiCurrInput.MousePixelPos = V2(CurrInput->MousePixelPos);
+        UiCurrInput.MouseScroll = CurrInput->MouseScroll;
+        Copy(CurrInput->KeysDown, UiCurrInput.KeysDown, sizeof(UiCurrInput.KeysDown));
+        UiStateBegin(UiState, FrameTime, RenderState->WindowWidth, RenderState->WindowHeight, UiCurrInput);
+        local_global v2 PanelPos = V2(100, 800);
+        ui_panel Panel = UiPanelBegin(UiState, &PanelPos, "Shadow Panel");
+        
+        f32 FilterSize = 0;
+
+        f32 BlurFilterSize = 0;
+        
+        {
+            UiPanelText(&Panel, "Shadow Data:");
+
+            local_global f32 ResolutionX = f32(DemoState->ShadowResX);
+            local_global f32 ResolutionY = f32(DemoState->ShadowResY);
+            
+            UiPanelNextRowIndent(&Panel);
+            UiPanelText(&Panel, "Resolution X:");
+            UiPanelHorizontalSlider(&Panel, 1.0f, 1024.0f, &ResolutionX);
+            UiPanelNumberBox(&Panel, &ResolutionX);
+            UiPanelNextRow(&Panel);
+
+            UiPanelNextRowIndent(&Panel);
+            UiPanelText(&Panel, "Resolution Y:");
+            UiPanelHorizontalSlider(&Panel, 1.0f, 1024.0f, &ResolutionY);
+            UiPanelNumberBox(&Panel, &ResolutionY);
+            UiPanelNextRow(&Panel);
+
+            if (DemoState->ShadowResX != u32(ResolutionX) || DemoState->ShadowResY != u32(ResolutionY))
+            {
+                StandardShadowResize(&DemoState->ForwardState.StandardShadow, u32(ResolutionX), u32(ResolutionY));
+                StandardShadowResize(&DemoState->ForwardState.PcfShadow, u32(ResolutionX), u32(ResolutionY));
+                VarianceShadowResize(&DemoState->ForwardState.VarianceShadow, u32(ResolutionX), u32(ResolutionY));
+            }
+            
+            DemoState->ShadowResX = u32(ResolutionX);
+            DemoState->ShadowResY = u32(ResolutionY);
+            
+            UiPanelNextRowIndent(&Panel);
+            UiPanelText(&Panel, "World Dim:");
+            UiPanelHorizontalSlider(&Panel, 0.0f, 32.0f, &DemoState->ShadowWorldDim);
+            UiPanelNumberBox(&Panel, &DemoState->ShadowWorldDim);
+            UiPanelNextRow(&Panel);
+            
+            UiPanelNextRowIndent(&Panel);
+            UiPanelText(&Panel, "View X:");
+            UiPanelHorizontalSlider(&Panel, -1.0f, 1.0f, &DemoState->ShadowView.x);
+            UiPanelNumberBox(&Panel, &DemoState->ShadowView.x);
+            UiPanelNextRow(&Panel);
+            
+            UiPanelNextRowIndent(&Panel);
+            UiPanelText(&Panel, "View Y:");
+            UiPanelHorizontalSlider(&Panel, -1.0f, 1.0f, &DemoState->ShadowView.y);
+            UiPanelNumberBox(&Panel, &DemoState->ShadowView.y);
+            UiPanelNextRow(&Panel);
+            
+            UiPanelNextRowIndent(&Panel);
+            UiPanelText(&Panel, "View Z:");
+            UiPanelHorizontalSlider(&Panel, -1.0f, 1.0f, &DemoState->ShadowView.z);
+            UiPanelNumberBox(&Panel, &DemoState->ShadowView.z);
+            UiPanelNextRow(&Panel);
+        }
+
+        switch (DemoState->ShadowMode)
+        {
+            case ShadowMode_Pcf:
+            {
+                UiPanelText(&Panel, "PCF:");
+                UiPanelNextRowIndent(&Panel);
+                UiPanelText(&Panel, "Filter Size:");
+                UiPanelNumberBox(&Panel, &FilterSize);
+                UiPanelNextRow(&Panel);
+            } break;
+
+            case ShadowMode_Variance:
+            {
+                UiPanelText(&Panel, "Variance:");
+                UiPanelNextRowIndent(&Panel);
+                UiPanelText(&Panel, "Blur Filter Size:");
+                UiPanelNumberBox(&Panel, &BlurFilterSize);
+                UiPanelNextRow(&Panel);
+            } break;
+        }
+
+        UiPanelEnd(&Panel);
+
+        UiStateEnd(UiState, &RenderState->DescriptorManager);
+    }
     
     // NOTE: Upload scene data
     {
         render_scene* Scene = &DemoState->Scene;
         Scene->NumOpaqueInstances = 0;
         Scene->NumPointLights = 0;
-        CameraUpdate(&Scene->Camera, CurrInput, PrevInput);
+        if (!(DemoState->UiState.MouseTouchingUi || DemoState->UiState.ProcessedInteraction))
+        {
+            CameraUpdate(&Scene->Camera, CurrInput, PrevInput);
+        }
         
         // NOTE: Populate scene
         {
@@ -361,11 +447,10 @@ DEMO_MAIN_LOOP(MainLoop)
                 T = 0.0f;
             }
 
-            //v3 LightDir = Normalize(V3(0.5f*Sin(T), 0.5f*Cos(T), 0.0f));
-            v3 LightDir = Normalize(V3(0.4f, -1.0f, 0.0f));
-            
-            SceneDirectionalLightSet(Scene, LightDir, V3(1.0f, 1.0f, 1.0f), V3(0.15),
-                                     V3(-5.0f, -5.0f, -10.0f), V3(5.0f, 5.0f, 10.0f));
+            v3 LightDir = Normalize(DemoState->ShadowView);
+            f32 Radius = 0.5f*DemoState->ShadowWorldDim;
+            SceneDirectionalLightSet(Scene, LightDir, V3(1.0f, 1.0f, 1.0f), V3(0.15f),
+                                     V3(-Radius, -Radius, -10.0f), V3(Radius, Radius, 10.0f));
             
             // NOTE: Add Instances
             {
@@ -458,11 +543,12 @@ DEMO_MAIN_LOOP(MainLoop)
     }
 
     // NOTE: Render Scene
-    ForwardRender(Commands, &DemoState->ForwardState, &DemoState->Scene);
+    ForwardRender(Commands, &DemoState->ForwardState, &DemoState->Scene, DemoState->ShadowMode);
 
     RenderTargetPassBegin(&DemoState->CopyToSwapTarget, Commands, RenderTargetRenderPass_SetViewPort | RenderTargetRenderPass_SetScissor);
     FullScreenPassRender(Commands, DemoState->CopyToSwapPipeline, 1, &DemoState->CopyToSwapDesc);
     RenderTargetPassEnd(Commands);
+    UiStateRender(&DemoState->UiState, RenderState->Device, Commands, DemoState->SwapChainEntry.View);
         
     VkCheckResult(vkEndCommandBuffer(Commands.Buffer));
                     

@@ -13,3 +13,6 @@
 [submodule "libs/memory"]
 	path = libs/memory
 	url = https://github.com/Ihaa21/memory.git
+[submodule "libs/ui"]
+	path = libs/ui
+	url = https://github.com/Ihaa21/ui.git

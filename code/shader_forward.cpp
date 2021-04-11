@@ -48,8 +48,9 @@ layout(location = 0) out vec2 OutMoments;
 
 void main()
 {
-    OutMoments.x = InDepth;
-    OutMoments.y = InDepth * InDepth;
+    float ReversedDepth = 1.0f - InDepth;
+    OutMoments.x = ReversedDepth;
+    OutMoments.y = ReversedDepth * ReversedDepth;
     //OutMoments.x = InDepth;
     //float Dx = dFdx(InDepth);
     //float Dy = dFdy(InDepth);
@@ -102,8 +103,8 @@ float DirLightOcclusionStandardGet(vec3 SurfaceNormal, vec3 LightDir, vec3 Light
     // angles are, the larger our bias will be. This appears to be a decent approximation
     float Bias = clamp(0.005 * tan(acos(clamp(dot(SurfaceNormal, LightDir), 0, 1))), 0, 0.005);
     float Depth = texture(StandardShadowMap, Uv).x;
-    
-    return step(LightPos.z - Bias, Depth);
+
+    return step(Depth, LightPos.z + Bias);
 }
 
 float DirLightOcclusionPcfGet(vec3 SurfaceNormal, vec3 LightDir, vec3 LightPos)
@@ -124,7 +125,7 @@ float DirLightOcclusionPcfGet(vec3 SurfaceNormal, vec3 LightDir, vec3 LightPos)
     {
         // TODO: We define the spreading via /700 but its probably better to define it via pixel size in world space using derivatives?
         float Depth = texture(StandardShadowMap, LightPosUv + PoissonDisk[i]/700.0).x;
-        Occlusion += (1.0f / 4.0f) * step(LightPos.z - Bias, Depth);
+        Occlusion += (1.0f / 4.0f) * step(Depth, LightPos.z + Bias);
     }
 
     // TODO: Probably better to do uniform sampling of 7x7 region using gathers
@@ -143,6 +144,8 @@ float DirLightOcclusionVarianceGet(vec3 SurfaceNormal, vec3 LightDir, vec3 Light
     // NOTE: https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-8-summed-area-variance-shadow-maps
     // NOTE: https://http.download.nvidia.com/developer/presentations/2006/gdc/2006-GDC-Variance-Shadow-Maps.pdf
     float Occlusion = 0.0f;
+
+    LightPos.z = 1.0f - LightPos.z;
     
     // NOTE: You can embedd the NDC transform in the matrix but then you need a separate set of transforms for each object
     vec2 Uv = 0.5*LightPos.xy + vec2(0.5);
